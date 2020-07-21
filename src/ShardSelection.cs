@@ -9,7 +9,7 @@ namespace Sharding
         private static readonly DateTime StartTime = new DateTime(1970, 1, 1, 0, 0, 0);
 
         private List<KeyValuePair<long, int>> records;
-        private int[] tree;
+        private ScaleRecordTreeNode rootNode;
 
         public ShardSelection(IShardScaleRecord record)
         {
@@ -25,38 +25,53 @@ namespace Sharding
             }
 
             this.records = rs.OrderBy(pair => pair.Key).ToList();
-            this.tree = new int[this.records.Count];
             int mid = this.records.Count / 2;
-            this.tree[0] = mid;
-            this.BuildTree(0, 0, this.records.Count - 1, mid);
+            this.rootNode = new ScaleRecordTreeNode
+            {
+                Record = this.records[mid]
+            };
+            this.BuildTree(0, this.records.Count - 1, mid, this.rootNode);
         }
 
-        private void BuildTree(int index, int begin, int end, int root)
+        /// <summary>
+        /// 构建二叉搜索树
+        /// </summary>
+        /// <param name="begin"></param>
+        /// <param name="end"></param>
+        /// <param name="rootIndex"></param>
+        /// <param name="rootNode"></param>
+        private void BuildTree(int begin, int end, int rootIndex, ScaleRecordTreeNode rootNode)
         {
-            if(index >= this.tree.Length)
-            {
-                return;
-            }
-            if(begin > end || begin > root || root > end)
+            if (begin > end || begin > rootIndex || rootIndex > end)
             {
                 return;
             }
 
-            int leftIndex = 2 * index + 1;
-            int rightIndex = 2 * index + 2;
-
-            if(leftIndex < this.tree.Length)
+            if (begin < rootIndex)
             {
-                int r = (begin + root - 1) / 2;
-                this.tree[leftIndex] = r;
-                this.BuildTree(leftIndex, begin, root - 1, r);
+                var l = (begin + rootIndex - 1) / 2;
+                if (l < this.records.Count)
+                {
+                    var lNode = new ScaleRecordTreeNode
+                    {
+                        Record = this.records[l]
+                    };
+                    rootNode.LeftNode = lNode;
+                    this.BuildTree(begin, rootIndex - 1, l, lNode);
+                }
             }
-
-            if(rightIndex < this.tree.Length)
+            if (rootIndex < end)
             {
-                int r = (root + 1 + end) / 2;
-                this.tree[rightIndex] = r;
-                this.BuildTree(rightIndex, root + 1, end, r);
+                var r = (rootIndex + 1 + end) / 2;
+                if (r < this.records.Count)
+                {
+                    var rNode = new ScaleRecordTreeNode
+                    {
+                        Record = this.records[r]
+                    };
+                    rootNode.RightNode = rNode;
+                    this.BuildTree(rootIndex + 1, end, r, rNode);
+                }
             }
         }
 
@@ -68,7 +83,7 @@ namespace Sharding
         public int SelectShard(string key, long timestamp)
         {
             int shardIndex = 0;
-            this.SearchShardScale(timestamp, 0, ref shardIndex);
+            this.SearchShardScale(timestamp, this.rootNode, ref shardIndex);
             int hash = Hash.GetHashCode(key);
             int shard = hash % this.records[shardIndex].Value;
             if(shard < 0)
@@ -81,8 +96,8 @@ namespace Sharding
         public IEnumerable<int> SelectShards(string key, long begin, long end)
         {
             int beginIndex = 0, endIndex = 0;
-            this.SearchShardScale(begin, 0, ref beginIndex);
-            this.SearchShardScale(end, 0, ref endIndex);
+            this.SearchShardScale(begin, this.rootNode, ref beginIndex);
+            this.SearchShardScale(end, this.rootNode, ref endIndex);
             int hash = Hash.GetHashCode(key);
 
             var result = new List<int>();
@@ -119,23 +134,21 @@ namespace Sharding
             return (int)((id >> IdWorker.SequenceBits) & IdWorker.ShardingMask);
         }
 
-        private void SearchShardScale(long timestamp, int index, ref int result)
+        private void SearchShardScale(long timestamp, ScaleRecordTreeNode node, ref int result)
         {
-            if(index >= this.tree.Length)
+            if (node == null)
             {
                 return;
             }
 
-            var root = this.records[this.tree[index]];
-            long comparor = root.Key;
-            if(timestamp >= comparor)
+            if (timestamp >= node.Record.Key)
             {
-                result = this.tree[index];
-                this.SearchShardScale(timestamp, 2 * index + 2, ref result);
+                result = node.Record.Value;
+                this.SearchShardScale(timestamp, node.RightNode, ref result);
             }
             else
             {
-                this.SearchShardScale(timestamp, 2 * index + 1, ref result);
+                this.SearchShardScale(timestamp, node.LeftNode, ref result);
             }
         }
     }

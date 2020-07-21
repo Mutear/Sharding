@@ -1,4 +1,5 @@
 ﻿using System;
+using Sharding;
 
 namespace Test
 {
@@ -6,6 +7,8 @@ namespace Test
     {
         static void Main(string[] args)
         {
+            var selection = new ShardSelection(new ShardScaleRecord());
+            Console.WriteLine(selection.SelectShard("test", 222227));
         }
     }
 }
